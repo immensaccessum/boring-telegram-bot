@@ -131,50 +131,61 @@ async function sendPngPreview(chatId, pngBuffer, currentState) {
 }
 
 // Функция для начала процесса генерации (SVG -> PNG -> Отправка превью)
-async function startGenerationProcess(chatId, name, variant, colors) {
-     let workingMsg; // Сообщение "Генерирую..."
-     try {
-         workingMsg = await bot.sendMessage(chatId, `⏳ Генерирую аватар "${name}" (стиль: ${variant})...`);
+async function startGenerationProcess(chatId, name, variant, colors, messageToEdit = null) {
+    let workingMsg;
+    try {
+        if (messageToEdit) {
+            // Если передано сообщение для редактирования, используем его
+            await bot.editMessageText(`⏳ Генерирую аватар "${name}" (стиль: ${variant})...`, {
+                chat_id: chatId,
+                message_id: messageToEdit.message_id,
+                reply_markup: {} // Убираем старые кнопки
+            });
+            workingMsg = messageToEdit;
+        } else {
+            // Иначе, отправляем новое сообщение
+            workingMsg = await bot.sendMessage(chatId, `⏳ Генерирую аватар "${name}" (стиль: ${variant})...`);
+        }
 
-         const svgString = generateSvgString(name, variant, colors);
-         if (!svgString) {
-             await bot.editMessageText('Произошла ошибка при создании SVG. Попробуйте снова.', {chat_id: chatId, message_id: workingMsg.message_id});
-             delete userState[chatId];
-             return;
-         }
+        const svgString = generateSvgString(name, variant, colors);
+        if (!svgString) {
+            await bot.editMessageText('Произошла ошибка при создании SVG. Попробуйте снова.', { chat_id: chatId, message_id: workingMsg.message_id });
+            delete userState[chatId];
+            return;
+        }
 
-         // Сохраняем SVG и ЦВЕТА в состояние ДО конвертации в PNG
-         if (userState[chatId]) {
-             userState[chatId].currentSvgString = svgString;
-             userState[chatId].currentColors = colors; // Сохраняем использованные цвета
-         } else {
-             console.warn(`[${chatId}] Состояние пользователя не найдено перед сохранением SVG/цветов.`);
-             await bot.editMessageText('Произошла ошибка состояния. Начните заново /start', {chat_id: chatId, message_id: workingMsg.message_id});
-             return;
-         }
+        // Сохраняем SVG и ЦВЕТА в состояние ДО конвертации в PNG
+        if (userState[chatId]) {
+            userState[chatId].currentSvgString = svgString;
+            userState[chatId].currentColors = colors; // Сохраняем использованные цвета
+        } else {
+            console.warn(`[${chatId}] Состояние пользователя не найдено перед сохранением SVG/цветов.`);
+            await bot.editMessageText('Произошла ошибка состояния. Начните заново /start', { chat_id: chatId, message_id: workingMsg.message_id });
+            return;
+        }
 
-         const pngBuffer = await convertSvgToPng(svgString);
-         if (!pngBuffer) {
-             await bot.editMessageText('Произошла ошибка при конвертации в PNG. Попробуйте снова.', {chat_id: chatId, message_id: workingMsg.message_id});
-             delete userState[chatId];
-             return;
-         }
+        const pngBuffer = await convertSvgToPng(svgString);
+        if (!pngBuffer) {
+            await bot.editMessageText('Произошла ошибка при конвертации в PNG. Попробуйте снова.', { chat_id: chatId, message_id: workingMsg.message_id });
+            delete userState[chatId];
+            return;
+        }
 
-         // Удаляем сообщение "Генерирую..." перед отправкой превью
-         await bot.deleteMessage(chatId, workingMsg.message_id).catch(()=>{/* Игнорируем ошибку удаления */});
-         workingMsg = null; // Сбрасываем, чтобы не пытаться удалить еще раз в catch
+        // Удаляем сообщение "Генерирую..." перед отправкой превью
+        await bot.deleteMessage(chatId, workingMsg.message_id).catch(() => { /* Игнорируем ошибку удаления */ });
+        workingMsg = null; // Сбрасываем, чтобы не пытаться удалить еще раз в catch
 
-         await sendPngPreview(chatId, pngBuffer, userState[chatId]);
+        await sendPngPreview(chatId, pngBuffer, userState[chatId]);
 
-     } catch (error) {
-         console.error(`[${chatId}] Ошибка в startGenerationProcess:`, error);
-         if (workingMsg) { // Если сообщение "Генерирую" еще не удалено
-             await bot.editMessageText('Произошла непредвиденная ошибка при генерации. Попробуйте начать заново /start', { chat_id: chatId, message_id: workingMsg.message_id }).catch(()=>{});
-         } else {
-             await bot.sendMessage(chatId, 'Произошла непредвиденная ошибка при генерации. Попробуйте начать заново /start').catch(()=>{});
-         }
-         delete userState[chatId]; // Очищаем состояние при серьезной ошибке
-     }
+    } catch (error) {
+        console.error(`[${chatId}] Ошибка в startGenerationProcess:`, error);
+        if (workingMsg) { // Если сообщение "Генерирую" еще не удалено
+            await bot.editMessageText('Произошла непредвиденная ошибка при генерации. Попробуйте начать заново /start', { chat_id: chatId, message_id: workingMsg.message_id }).catch(() => { });
+        } else {
+            await bot.sendMessage(chatId, 'Произошла непредвиденная ошибка при генерации. Попробуйте начать заново /start').catch(() => { });
+        }
+        delete userState[chatId]; // Очищаем состояние при серьезной ошибке
+    }
 }
 
 
@@ -363,9 +374,6 @@ bot.on('callback_query', async (callbackQuery) => { // Асинхронный о
         // Сохраняем выбранный вариант
         currentState.variant = selectedVariant;
 
-        // Пытаемся убрать кнопки у сообщения с выбором стиля (msg.message_id)
-        bot.editMessageReplyMarkup({}, { chat_id: chatId, message_id: msg.message_id }).catch(()=>{/* Игнор */});
-
         // --- Обработка в зависимости от предыдущего шага ---
         if (previousStep === 'selecting_new_style') {
              // Если мы МЕНЯЛИ стиль после превью
@@ -376,9 +384,10 @@ bot.on('callback_query', async (callbackQuery) => { // Асинхронный о
                  delete userState[chatId];
                  return;
              }
-             // Запускаем генерацию превью с НОВЫМ стилем и СТАРЫМИ цветами
+             // Запускаем генерацию превью с НОВЫМ стилем и СТАРЫМИ цветами,
+             // редактируя сообщение с выбором стиля
              currentState.step = 'generating'; // Промежуточный шаг
-             await startGenerationProcess(chatId, name, selectedVariant, currentColors);
+             await startGenerationProcess(chatId, name, selectedVariant, currentColors, msg);
 
         } else { // previousStep === 'type' (изначальный выбор типа)
             // Переходим к выбору цветов (старая логика)
@@ -429,27 +438,30 @@ bot.on('callback_query', async (callbackQuery) => { // Асинхронный о
             case 'random':
                 colorsToUse = generateRandomPalette();
                 currentState.step = 'generating'; // Промежуточный шаг
-                await startGenerationProcess(chatId, name, variant, colorsToUse);
+                await startGenerationProcess(chatId, name, variant, colorsToUse, msg);
                 break;
             case 'default':
                 colorsToUse = defaultColors;
                 currentState.step = 'generating'; // Промежуточный шаг
-                await startGenerationProcess(chatId, name, variant, colorsToUse);
+                await startGenerationProcess(chatId, name, variant, colorsToUse, msg);
                 break;
             case 'custom':
                 currentState.awaitingColors = true; // Устанавливаем флаг ожидания
                 currentState.step = 'awaiting_custom_colors'; // Более точный шаг
-                 // Отправляем НОВОЕ сообщение с инструкцией и кнопками Назад/Отмена
-                 bot.sendMessage(chatId, `Хорошо. Теперь просто отправь мне сообщением список цветов через запятую.\n\n*Пример:* \`#ff0000, 0000ff, #aabbcc\`\n(Можно с # или без, 3 или 6 символов hex)`, {
-                     reply_markup: { inline_keyboard: [
-                         // Кнопка назад вернет к выбору способа задания цвета (random/default/custom)
-                         [{ text: '⬅️ Назад (к выбору палитры)', callback_data: 'back_to_color_options' }],
-                         [{ text: '❌ Отмена', callback_data: 'cancel_creation' }]
-                     ]},
+                 // Редактируем текущее сообщение, превращая его в инструкцию
+                 bot.editMessageText(`Хорошо. Теперь просто отправь мне сообщением список цветов через запятую.\n\n*Пример:* 
+#ff0000, 0000ff, #aabbcc
+(Можно с # или без, 3 или 6 символов hex)`, {
+                     chat_id: chatId,
+                     message_id: msg.message_id,
+                     reply_markup: {
+                         inline_keyboard: [
+                             // Кнопка назад вернет к выбору способа задания цвета (random/default/custom)
+                             [{ text: '⬅️ Назад (к выбору палитры)', callback_data: 'back_to_color_options' }],
+                             [{ text: '❌ Отмена', callback_data: 'cancel_creation' }]
+                         ]
+                     },
                      parse_mode: 'Markdown'
-                 }).then(sentInstructionMsg => {
-                     // Можно сохранить ID этого сообщения, чтобы потом удалить его
-                     // if(userState[chatId]) userState[chatId].instructionMessageId = sentInstructionMsg.message_id;
                  }).catch(error => {
                      console.error(`[${chatId}] Ошибка отправки инструкции для кастомных цветов:`, error);
                  });
